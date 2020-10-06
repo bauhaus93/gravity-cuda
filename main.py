@@ -207,13 +207,15 @@ class Universe:
         return self.get_size() / self.initital_size
 
     def draw(self, surface):
+        surface_size = surface.get_size()
         for i in range(self.mass_list.shape[0]):
             screen_pos = to_screen(
-                self.mass_list[i][1:3], self.boundary, surface.get_size()
+                self.mass_list[i][1:3], self.boundary, surface_size
             )
-            mass_frac = self.mass_list[i][0] / self.max_mass
-            color = np.array((0xFF * mass_frac, 0xFF * (1.0 - mass_frac), 0), dtype=int)
-            pygame.draw.circle(surface, color, screen_pos, 2)
+            if screen_pos[0] >= 0 and screen_pos[0] < surface_size[0] and screen_pos[1] >= 0 and screen_pos[1] < surface_size[1]:
+                mass_frac = self.mass_list[i][0] / self.max_mass
+                color = np.array((0xFF * mass_frac, 0xFF * (1.0 - mass_frac), 0), dtype=int)
+                pygame.draw.circle(surface, color, screen_pos, 2)
 
 
 def draw_scene(display, surface, font, universe, update_time):
