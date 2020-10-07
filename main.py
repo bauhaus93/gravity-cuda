@@ -1,12 +1,13 @@
 #!/bin/env python3
 
-import pygame
-import time
-import numpy as np
-import random
-import math
 import logging
-from numba import cuda, float64
+import math
+import random
+import time
+
+import numpy as np
+import pygame
+from numba import cuda
 
 
 def setup_logger():
@@ -61,13 +62,10 @@ def update_mass(masses_input, masses_output, delta_time):
         acc_x = force_x / masses_input[dest_index, 0] * delta_time
         acc_y = force_y / masses_input[dest_index, 0] * delta_time
 
-        cuda.atomic.add(masses_output, (dest_index, 5), acc_x)
-        cuda.atomic.add(masses_output, (dest_index, 6), acc_y)
+        cuda.atomic.add(masses_output, (dest_index, 3), acc_x)
+        cuda.atomic.add(masses_output, (dest_index, 4), acc_y)
     cuda.syncthreads()
     if src_index == 0:
-        masses_output[dest_index][3] += masses_output[dest_index][5] * delta_time
-        masses_output[dest_index][4] += masses_output[dest_index][6] * delta_time
-
         masses_output[dest_index][1] += masses_output[dest_index][3] * delta_time
         masses_output[dest_index][2] += masses_output[dest_index][4] * delta_time
 
@@ -91,14 +89,14 @@ def update_masses(masses_input, delta_time):
 
 
 def create_random_masses(mass_count, max_mass, boundary):
-    mass_list = np.zeros((mass_count, 7))
+    mass_list = np.zeros((mass_count, 5))
     for i in range(mass_count):
         mass = random.uniform(1.0, max_mass)
         pos_x = random.uniform(boundary[0], boundary[2])
         pos_y = random.uniform(boundary[1], boundary[3])
         mass_list[
             i,
-        ] = (mass, pos_x, pos_y, 0.0, 0.0, 0.0, 0.0)
+        ] = (mass, pos_x, pos_y, 0.0, 0.0)
     return mass_list
 
 
@@ -117,7 +115,7 @@ class Universe:
     def add_mass(self, universe_pos, mass):
         self.mass_list = np.append(
             self.mass_list,
-            [[mass, universe_pos[0], universe_pos[1], 0.0, 0.0, 0.0, 0.0]],
+            [[mass, universe_pos[0], universe_pos[1], 0.0, 0.0]],
             axis=0,
         )
         if mass > self.max_mass:
@@ -192,16 +190,9 @@ class Universe:
     def get_max_velocity(self):
         max_vel = 0
         for i in range(self.mass_list.shape[0]):
-            vel = (self.mass_list[0][3] ** 2 + self.mass_list[0][4] ** 2) ** 0.5
+            vel = (self.mass_list[i][3] ** 2 + self.mass_list[i][4] ** 2) ** 0.5
             max_vel = max(max_vel, vel)
         return max_vel
-
-    def get_max_acceleration(self):
-        max_acc = 0
-        for i in range(self.mass_list.shape[0]):
-            acc = (self.mass_list[0][5] ** 2 + self.mass_list[0][6] ** 2) ** 0.5
-            max_acc = max(max_acc, acc)
-        return max_acc
 
     def get_scale_factor(self):
         return self.get_size() / self.initital_size
@@ -209,12 +200,17 @@ class Universe:
     def draw(self, surface):
         surface_size = surface.get_size()
         for i in range(self.mass_list.shape[0]):
-            screen_pos = to_screen(
-                self.mass_list[i][1:3], self.boundary, surface_size
-            )
-            if screen_pos[0] >= 0 and screen_pos[0] < surface_size[0] and screen_pos[1] >= 0 and screen_pos[1] < surface_size[1]:
+            screen_pos = to_screen(self.mass_list[i][1:3], self.boundary, surface_size)
+            if (
+                screen_pos[0] >= 0
+                and screen_pos[0] < surface_size[0]
+                and screen_pos[1] >= 0
+                and screen_pos[1] < surface_size[1]
+            ):
                 mass_frac = self.mass_list[i][0] / self.max_mass
-                color = np.array((0xFF * mass_frac, 0xFF * (1.0 - mass_frac), 0), dtype=int)
+                color = np.array(
+                    (0xFF * mass_frac, 0xFF * (1.0 - mass_frac), 0), dtype=int
+                )
                 pygame.draw.circle(surface, color, screen_pos, 2)
 
 
@@ -226,7 +222,6 @@ def draw_scene(display, surface, font, universe, update_time):
 
     scale = universe.get_scale_factor()
     max_vel = universe.get_max_velocity()
-    max_acc = universe.get_max_acceleration()
     update_time_surface = font.render(
         f"Update time: {round(update_time):.0f} ms",
         True,
@@ -251,26 +246,19 @@ def draw_scene(display, surface, font, universe, update_time):
         [0xFF] * 3,
         [0] * 3,
     )
-    acc_surface = font.render(
-        f"Max Acc: {max_acc:.1f} m/s^2",
-        True,
-        [0xFF] * 3,
-        [0] * 3,
-    )
     display.blit(surface, (0, 0))
     display.blit(update_time_surface, (0, 20))
     display.blit(mass_count_surface, (0, 40))
     display.blit(scale_surface, (0, 60))
     display.blit(vel_surface, (0, 80))
-    display.blit(acc_surface, (0, 100))
     pygame.display.flip()
 
 
 if __name__ == "__main__":
     SCREEN_SIZE = (1024, 768)
     UNIVERSE_SIZE = (1e6, 1e6)
-    MAX_MASS = 1e10
-    MASS_COUNT = 2000
+    MAX_MASS = 1e14
+    MASS_COUNT = 1000
     DELTA_TIME = 1.0
     setup_logger()
     pygame.init()
@@ -287,16 +275,13 @@ if __name__ == "__main__":
     while not quit:
         start = time.time()
         universe.tick(delta_time)
-        update_time = (time.time() - start) * 1000.
+        update_time = (time.time() - start) * 1000.0
         draw_scene(display, surface, font, universe, update_time)
-        render_time = (time.time() - start) * 1000.
+        render_time = (time.time() - start) * 1000.0
 
         for e in pygame.event.get():
             if e.type == pygame.constants.QUIT:
                 quit = True
-            elif e.type == pygame.KEYUP:
-                if e.key == pygame.K_e:
-                    universe.add_mass(1e16)
             elif e.type == pygame.MOUSEBUTTONDOWN:
                 ZOOM_FACTOR = 1.2
                 if e.button == 1:
@@ -308,7 +293,7 @@ if __name__ == "__main__":
                     universe_pos = to_universe(
                         e.pos, universe.get_boundary(), SCREEN_SIZE
                     )
-                    universe.add_mass(universe_pos, 1e16)
+                    universe.add_mass(universe_pos, MAX_MASS * 2.0)
                 elif e.button == 4:  # wheel up
                     universe.zoom(1.0 / ZOOM_FACTOR)
                 elif e.button == 5:
