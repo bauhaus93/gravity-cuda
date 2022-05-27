@@ -156,9 +156,11 @@ class Universe:
         for i in range(self.mass_list.shape[0]):
             m = self.mass_list[i]
             d = np.array([m[1] - center[0], m[2] - center[1]], dtype=float)
-            d_norm = d / np.sqrt(np.sum(d**2))
+            dist = np.sqrt(np.sum(d**2))
+            d_norm = d / dist
+            curr_str = max(10, strength / dist)
             mod = np.array(
-                [0.0, 0.0, 0.0, d_norm[0] * strength, d_norm[1] * strength], dtype=float
+                [0.0, 0.0, 0.0, d_norm[0] * curr_str, d_norm[1] * curr_str], dtype=float
             )
             self.mass_list[i] = m + mod
 
@@ -324,7 +326,7 @@ if __name__ == "__main__":
                     universe_pos = to_universe(
                         e.pos, universe.get_boundary(), SCREEN_SIZE
                     )
-                    universe.apply_force(200, universe_pos)
+                    universe.apply_force(1e8, universe_pos)
                 elif e.button == 3:
                     universe_pos = to_universe(
                         e.pos, universe.get_boundary(), SCREEN_SIZE
