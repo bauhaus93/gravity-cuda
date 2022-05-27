@@ -48,7 +48,7 @@ def update_mass(masses_input, masses_output, delta_time):
     if dest_index != src_index:
         direction_x = masses_input[src_index, 1] - masses_input[dest_index, 1]
         direction_y = masses_input[src_index, 2] - masses_input[dest_index, 2]
-        distance = (direction_x ** 2 + direction_y ** 2) ** 0.5
+        distance = (direction_x**2 + direction_y**2) ** 0.5
 
         force = (
             GRAVITATIONAL_CONSTANT
@@ -84,16 +84,19 @@ def update_masses(masses_input, delta_time):
     update_mass[blocks_per_grid, threads_per_block](
         input_device, output_device, delta_time
     )
-    output_device.to_host()
+    masses_output = output_device.copy_to_host()
     return masses_output
 
 
-def create_random_masses(mass_count, max_mass, boundary):
+def create_random_masses(mass_count, min_mass, max_mass, center, radius):
     mass_list = np.zeros((mass_count, 5))
     for i in range(mass_count):
-        mass = random.uniform(1.0, max_mass)
-        pos_x = random.uniform(boundary[0], boundary[2])
-        pos_y = random.uniform(boundary[1], boundary[3])
+        mass = random.uniform(min_mass, max_mass)
+        u = random.random()
+        v = random.random()
+
+        pos_x = center[0] + radius * (u**0.5 * math.cos(2 * math.pi * v))
+        pos_y = center[1] + radius * (u**0.5 * math.sin(2 * math.pi * v))
         mass_list[
             i,
         ] = (mass, pos_x, pos_y, 0.0, 0.0)
@@ -101,7 +104,9 @@ def create_random_masses(mass_count, max_mass, boundary):
 
 
 class Universe:
-    def __init__(self, mass_count, max_mass, initial_size):
+    time = 0
+
+    def __init__(self, mass_count, min_mass, max_mass, initial_size):
         self.initital_size = np.array(initial_size, dtype=float)
         self.boundary = np.array(
             (0.0, 0.0, initial_size[0], initial_size[1]), dtype=float
@@ -109,7 +114,7 @@ class Universe:
         self.max_mass = max_mass
 
         self.mass_list = create_random_masses(
-            mass_count, max_mass, np.array((0.0, 0.0, initial_size[0], initial_size[1]))
+            mass_count, min_mass, max_mass, self.get_center(), min(initial_size) / 2.0
         )
 
     def add_mass(self, universe_pos, mass):
@@ -147,6 +152,16 @@ class Universe:
             dtype=float,
         )
 
+    def apply_force(self, strength, center):
+        for i in range(self.mass_list.shape[0]):
+            m = self.mass_list[i]
+            d = np.array([m[1] - center[0], m[2] - center[1]], dtype=float)
+            d_norm = d / np.sqrt(np.sum(d**2))
+            mod = np.array(
+                [0.0, 0.0, 0.0, d_norm[0] * strength, d_norm[1] * strength], dtype=float
+            )
+            self.mass_list[i] = m + mod
+
     def get_boundary(self):
         return self.boundary
 
@@ -154,6 +169,7 @@ class Universe:
         return self.mass_list.shape[0]
 
     def tick(self, delta_time):
+        self.time += delta_time
         self.mass_list = update_masses(self.mass_list, delta_time)
 
     def fit_boundary_to_masses(self, smooth=False):
@@ -209,9 +225,9 @@ class Universe:
             ):
                 mass_frac = self.mass_list[i][0] / self.max_mass
                 color = np.array(
-                    (0xFF * mass_frac, 0xFF * (1.0 - mass_frac), 0), dtype=int
+                    (0x50, 0xFF * mass_frac, 0xFF * (1.0 - mass_frac)), dtype=int
                 )
-                pygame.draw.circle(surface, color, screen_pos, 2)
+                pygame.draw.circle(surface, color, screen_pos, max(1, 4 * mass_frac))
 
 
 def draw_scene(display, surface, font, universe, update_time):
@@ -222,6 +238,14 @@ def draw_scene(display, surface, font, universe, update_time):
 
     scale = universe.get_scale_factor()
     max_vel = universe.get_max_velocity()
+
+    elapsed_time_surface = font.render(
+        f"Elapsed time: {round(universe.time):.0f}",
+        True,
+        [0xFF] * 3,
+        [0] * 3,
+    )
+
     update_time_surface = font.render(
         f"Update time: {round(update_time):.0f} ms",
         True,
@@ -235,7 +259,12 @@ def draw_scene(display, surface, font, universe, update_time):
         [0] * 3,
     )
     scale_surface = font.render(
-        f"Scale:      {scale[0]:.1f}/{scale[1]:.1f}",
+        "Scale:      "
+        + (
+            "{scale[0]:.1f}/{scale[1]:.1f}"
+            if abs(scale[0] - scale[1]) > 1e-3
+            else f"{scale[0]:.1f}"
+        ),
         True,
         [0xFF] * 3,
         [0] * 3,
@@ -247,18 +276,20 @@ def draw_scene(display, surface, font, universe, update_time):
         [0] * 3,
     )
     display.blit(surface, (0, 0))
-    display.blit(update_time_surface, (0, 20))
-    display.blit(mass_count_surface, (0, 40))
-    display.blit(scale_surface, (0, 60))
-    display.blit(vel_surface, (0, 80))
+    display.blit(elapsed_time_surface, (0, 0))
+    display.blit(update_time_surface, (0, 40))
+    display.blit(mass_count_surface, (0, 80))
+    display.blit(scale_surface, (0, 120))
+    display.blit(vel_surface, (0, 160))
     pygame.display.flip()
 
 
 if __name__ == "__main__":
-    SCREEN_SIZE = (1024, 768)
+    SCREEN_SIZE = (3440, 1440)
     UNIVERSE_SIZE = (1e6, 1e6)
+    MIN_MASS = 1e7
     MAX_MASS = 1e14
-    MASS_COUNT = 1000
+    MASS_COUNT = 2500
     DELTA_TIME = 1.0
     setup_logger()
     pygame.init()
@@ -268,7 +299,7 @@ if __name__ == "__main__":
     surface = pygame.Surface(display.get_size())
     surface.convert()
 
-    universe = Universe(MASS_COUNT, MAX_MASS, UNIVERSE_SIZE)
+    universe = Universe(MASS_COUNT, MIN_MASS, MAX_MASS, UNIVERSE_SIZE)
 
     quit = False
     delta_time = DELTA_TIME
@@ -289,6 +320,11 @@ if __name__ == "__main__":
                         e.pos, universe.get_boundary(), SCREEN_SIZE
                     )
                     universe.center(universe_pos)
+                elif e.button == 2:
+                    universe_pos = to_universe(
+                        e.pos, universe.get_boundary(), SCREEN_SIZE
+                    )
+                    universe.apply_force(200, universe_pos)
                 elif e.button == 3:
                     universe_pos = to_universe(
                         e.pos, universe.get_boundary(), SCREEN_SIZE
